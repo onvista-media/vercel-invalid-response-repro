@@ -1,5 +1,7 @@
 # INTERNAL_INVALID_RESPONSE for pages-router `notFound` on Vercel
 
+Repository: https://github.com/onvista-media/vercel-invalid-response-repro (control variant: https://github.com/onvista-media/vercel-invalid-response-repro-static)
+
 Minimal reproduction for a Vercel support case. Extracted from www.onvista.de
 (Vercel team `onvista`, project `onvista`, region fra1).
 
