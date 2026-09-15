@@ -68,6 +68,59 @@ Expected: 200 HIT/MISS in even minutes, 404 in odd minutes, recovery in the next
 Actual (production): after the first invalid response the key answers 500 from the Cache stage
 with no function invocation and does not recover on its own.
 
+## Results from this repro (2026-09-15, team onvista, project vercel-invalid-response-repro)
+
+Deployment `dpl_6noj4aAeEyXveqUzxPynCNDq9SSY`, host `vercel-invalid-response-repro.preview.onvista.de`, fra1.
+
+| Request | Result |
+|---|---|
+| `/snapshot/known`, `Mozilla/5.0` | 200, `x-vercel-cache: HIT` |
+| `/snapshot/unknown?r=…`, `Mozilla/5.0` | **500 `INTERNAL_INVALID_RESPONSE`** |
+| `/snapshot/unknown?r=…`, Chrome UA | **500** |
+| `/snapshot/unknown?r=…`, `curl/8.7.1`, `GPTBot`, `HomeAssistant` | **500** |
+| `/snapshot/unknown?r=…`, `Googlebot/2.1` | 404, `x-vercel-cache: MISS` |
+| `/snapshot/unknown?r=…`, `Mozilla/5.0` + `Authorization` header | **500**, so not a cached bad entry |
+| `/nope-…` (no matching route, static `/404`) | 404 |
+
+Request log for `pr2fx-1789453856140-ba155039872b` (`/snapshot/unknown`, UA `Mozilla/5.0`):
+Firewall Allowed -> Cache "500 Internal Invalid Response" (key `/snapshot/[slug]`, `r`, `nxtPslug=unknown`)
+-> Function Invocation `/snapshot/[slug]`, 37 ms, no outgoing requests -> response finished in 230 ms.
+Identical shape to the production requests below.
+
+### Bug 2 observed on this repro
+
+`/flaky/dax`, `Mozilla/5.0`, polled every 20 s (UTC):
+
+```
+06:32:04 200 STALE  age 68   (even minute: background revalidation renders 200)
+06:32:24 200 HIT
+06:33:05 200 STALE  age 61   (odd minute: background revalidation renders notFound -> invalid)
+06:33:25 500 INTERNAL_INVALID_RESPONSE
+06:33:45 500
+06:34:05 500                 (even minute again: origin would render 200, key is not revalidated)
+06:34:25 500
+06:34:45 500
+06:35:05 500
+```
+
+After one invalid origin response during a stale-while-revalidate refresh the key answers 500
+without further origin requests. `vercel cache purge --type cdn` is the only recovery we know.
+
+### Control variant: fully static not-found -> works
+
+Project `vercel-invalid-response-repro-static` (host `vercel-invalid-response-repro-stati.preview.onvista.de`)
+is the same code with `app/not-found.tsx` reduced to static markup (no `headers()`, no `Suspense`),
+so `/_not-found` is fully prerendered instead of partially prerendered.
+
+| Request | Result |
+|---|---|
+| `/snapshot/unknown?r=…`, `Mozilla/5.0` | **404**, HTML body 4736 bytes, `x-matched-path: /snapshot/[slug]` |
+| `/snapshot/unknown?r=…`, Chrome UA | 404 |
+| `/snapshot/unknown?r=…`, `Googlebot/2.1` | 404 |
+
+So the rejected response is specifically the partially prerendered not-found whose dynamic remainder
+is streamed at request time from within a pages-router function.
+
 ## Production evidence (team onvista, project onvista, deployment dpl_91M8zoWghTrEEC7mk3xMr1iRJnWC)
 
 - `qm4gr-1789453071559-adba3a88411b` (2026-09-15 08:17:51 CEST): Middleware 200 ->
